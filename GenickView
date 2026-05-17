@@ -1,0 +1,842 @@
+#!/usr/bin/python3
+import sys
+import os
+import locale
+import subprocess
+from pathlib import Path
+
+# --- CONFIGURAÇÕES DE AMBIENTE (SUAS E ORIGINAIS) ---
+os.environ["QT_QUICK_BACKEND"] = "software"
+os.environ["QT_VIDEO_GL_DEFAULT"] = "0"
+os.environ["LIBVA_DRIVER_NAME"] = "nodesktop"
+os.environ["QT_MULTIMEDIA_PREFERRED_PLUGINS"] = "ffmpeg"
+os.environ["QT_MEDIA_BACKEND"] = "ffmpeg"
+
+# --- DETECÇÃO DE CAMINHOS DINÂMICOS (O LACRE DA PORTABILIDADE) ---
+# Descobre onde o executável está rodando (ex: /usr/bin/)
+PASTA_DO_PROGRAMA = os.path.dirname(os.path.abspath(__file__))
+
+# Define o caminho do fundo (EaIpO.jpg deve estar na mesma pasta que este script)
+CAMINHO_FUNDO = os.path.join(PASTA_DO_PROGRAMA, "EaIpO.jpg")
+
+# Define onde as fotos ficam (Pasta Imagens do usuário atual / GenickView)
+PASTA_FOTOS_USUARIO = os.path.join(Path.home(), "Imagens", "GenickView")
+
+# Cria a pasta de fotos automaticamente se não existir para evitar janela cinza
+if not os.path.exists(PASTA_FOTOS_USUARIO):
+    try:
+        os.makedirs(PASTA_FOTOS_USUARIO)
+    except:
+        pass
+
+# Vacina contra Segfault (Essencial no Linux)
+try:
+    locale.setlocale(locale.LC_NUMERIC, 'C')
+except:
+    pass
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QMenu,
+                             QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
+                             QFrame, QScrollArea, QFileDialog, QPushButton, 
+                             QStackedWidget, QGraphicsView, QGraphicsScene, 
+                             QGraphicsPixmapItem, QInputDialog, QLineEdit, QMessageBox,
+                             QSlider)
+from PySide6.QtGui import QPixmap, QAction, QColor, QFont, QPainter, QBrush, QPen
+from PySide6.QtCore import Qt, QTimer, QRect, QEvent, QUrl
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QAudioFormat
+from PySide6.QtMultimediaWidgets import QVideoWidget
+
+# --- CLASSE ALBUMCARD (DOSSIÊ DE FUNDAMENTOS) ---
+class AlbumCard(QFrame):
+    def __init__(self, nome_pasta, caminho_raiz, caminho_capa=None):
+        super().__init__()
+        self.caminho_raiz = caminho_raiz
+        self.pixmap_original_limpo = None
+        caminho_lock = os.path.join(self.caminho_raiz, ".lock")
+        self.lacrado = os.path.exists(caminho_lock)
+
+        self.setFixedSize(200, 280)
+        self.setStyleSheet("background-color: rgba(0, 0, 0, 180); border-radius: 12px;")
+
+        self.container_capa = QWidget(self)
+        self.container_capa.setFixedSize(200, 200)
+
+        self.capa = QLabel(self.container_capa)
+        
+        # 4. AGORA SIM VOCÊ PODE USAR 'self.capa'
+        self.capa.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.capa.setGeometry(10, 10, 180, 180)
+        self.capa.setStyleSheet("background-color: #111; border-radius: 8px;")
+        self.atualizar_visual_capa(caminho_capa)
+
+        self.btn_menu = QPushButton("▼", self.container_capa)
+        self.btn_menu.setGeometry(160, 15, 28, 28)
+        self.btn_menu.setStyleSheet("QPushButton { background: transparent; color: white; border: 2px solid rgba(255,255,255,200); border-radius: 14px; font-weight: bold; } QPushButton:hover { border: 2px solid white; background: rgba(255,255,255,30); }")
+        self.btn_menu.clicked.connect(self.abrir_menu_acoes)
+
+        self.layout_texto = QVBoxLayout(self)
+        self.layout_texto.addSpacing(195)
+        self.label_nome = QLabel(nome_pasta)
+        self.label_nome.setStyleSheet("""
+            QLabel {
+                color: white; 
+                font-weight: bold; 
+                font-size: 15px;      /* Aumentamos de 12 para 15 */
+                background: transparent;
+            }
+        """)
+        self.label_nome.setAlignment(Qt.AlignCenter)
+        self.label_nome.setWordWrap(True)
+        self.layout_texto.addWidget(self.label_nome)
+
+        if self.lacrado:
+            QTimer.singleShot(100, self.aplicar_visual_lacre_automatico)
+
+    def obter_senha_mestra(self):
+        caminho_senha = os.path.expanduser("~/.genick_key")
+        if os.path.exists(caminho_senha):
+            try:
+                with open(caminho_senha, "r") as f: return f.read().strip()
+            except: pass
+        return "1234"
+
+    def aplicar_visual_lacre_automatico(self):
+        pix_original = self.capa.pixmap()
+        if pix_original and not pix_original.isNull():
+            self.pixmap_original_limpo = pix_original
+            mini = pix_original.scaled(8, 8, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+            foto_borrada = mini.scaled(pix_original.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            pix_lacre = QPixmap(pix_original.size())
+            painter = QPainter(pix_lacre)
+            painter.drawPixmap(0, 0, foto_borrada)
+            painter.setBrush(QBrush(QColor(0, 0, 0, 140)))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(pix_lacre.rect())
+            painter.setPen(QPen(QColor(255, 215, 0, 230)))
+            painter.setFont(QFont("Arial", 38, QFont.Bold))
+            painter.drawText(pix_lacre.rect(), Qt.AlignCenter, "🔒")
+            painter.end()
+            self.capa.setPixmap(pix_lacre)
+            self.capa.setStyleSheet("border: 2px solid #a00; border-radius: 8px;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self.lacrado: self.tentar_desbloquear()
+            else: self.executar_abertura()
+
+    def executar_abertura(self):
+        janela = self.window()
+        # O segredo: Pegamos a extensão do caminho_raiz (arquivo real), NÃO da capa
+        caminho_real_lower = self.caminho_raiz.lower()
+        
+        if os.path.isfile(self.caminho_raiz):
+            # Se o ARQUIVO ORIGINAL for vídeo, abre o player de vídeo
+            if caminho_real_lower.endswith(('.mp4', '.mkv', '.avi', '.mov')):
+                janela.exibir_video(self.caminho_raiz)
+            else:
+                # Se for imagem real, abre o visualizador de fotos
+                janela.exibir_foto_cheia(self.caminho_raiz)
+        else:
+            janela.abrir_pasta(self.caminho_raiz, self.label_nome.text())
+
+    def tentar_desbloquear(self):
+        texto, ok = QInputDialog.getText(self, "ID-LACRE", "Chave para DESBLOQUEAR:", echo=QLineEdit.Password)
+        if ok and texto.strip() == self.obter_senha_mestra():
+            self.lacrado = False
+            try:
+                caminho_lock = os.path.join(self.caminho_raiz, ".lock")
+                if os.path.exists(caminho_lock): os.remove(caminho_lock)
+            except: pass
+            if self.pixmap_original_limpo:
+                self.capa.setPixmap(self.pixmap_original_limpo)
+            self.capa.setStyleSheet("background-color: #111; border-radius: 8px; border: none;")
+            self.executar_abertura()
+        elif ok:
+            QMessageBox.warning(self, "ERRO", "Chave incorreta!")
+
+    def protocolo_alterar_senha(self):
+        atual = self.obter_senha_mestra()
+        senha_velha, ok1 = QInputDialog.getText(self, "Segurança", "Senha Atual:", echo=QLineEdit.Password)
+        if ok1 and senha_velha == atual:
+            nova_senha, ok2 = QInputDialog.getText(self, "Segurança", "Nova Senha:", echo=QLineEdit.Password)
+            if ok2 and len(nova_senha) >= 4:
+                with open(os.path.expanduser("~/.genick_key"), "w") as f:
+                    f.write(nova_senha)
+                QMessageBox.information(self, "Sucesso", "Chave de acesso atualizada!")
+
+    def atualizar_visual_capa(self, caminho):
+        if caminho and os.path.exists(caminho):
+            pixmap = QPixmap(caminho)
+            if not pixmap.isNull():
+                # Faz a imagem crescer até preencher todo o 180x180, cortando as sobras
+                pix_res = pixmap.scaled(180, 180, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                
+                # Opcional: Centraliza o recorte caso a imagem seja muito larga
+                rect = QRect(
+                    (pix_res.width() - 180) // 2,
+                    (pix_res.height() - 180) // 2,
+                    180, 180
+                )
+                pix_final = pix_res.copy(rect)
+                
+                self.capa.setPixmap(pix_final)
+                return
+            self.capa.setText("🎬\nVIDEO")
+            self.capa.setStyleSheet("color: #555; font-size: 20px; font-weight: bold; background-color: #1a1a1a; border-radius: 8px;")
+            return
+        if caminho and os.path.exists(caminho):
+            pixmap = QPixmap(caminho)
+            if not pixmap.isNull():
+                pix_res = pixmap.scaled(140, 140, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                self.capa.setPixmap(pix_res)
+                return
+        self.capa.setText("🖼️")
+        self.capa.setStyleSheet("color: #444; font-size: 40px; background-color: #111; border-radius: 8px;")
+
+    def abrir_menu_acoes(self):
+        menu = QMenu(self)
+        menu.setStyleSheet("background-color: #222; color: white;")
+        acao_bloquear = QAction("🔒 Bloquear Álbum", self)
+        acao_senha = QAction("🔑 Alterar Senha Mestra", self)
+        acao_renomear = QAction("📝 Renomear", self)
+        acao_capa = QAction("🖼️ Alterar Miniatura", self)
+        acao_bloquear.triggered.connect(self.protocolo_bloqueio)
+        acao_senha.triggered.connect(self.protocolo_alterar_senha)
+        acao_renomear.triggered.connect(self.solicitar_renomeio)
+        acao_capa.triggered.connect(self.escolher_nova_capa)
+        menu.addActions([acao_bloquear, acao_senha, acao_renomear, acao_capa])
+        menu.exec(self.btn_menu.mapToGlobal(self.btn_menu.rect().bottomLeft()))
+
+    def protocolo_bloqueio(self):
+        texto, ok = QInputDialog.getText(self, "Protocolo ID-LACRE", "Chave Mestra:", echo=QLineEdit.Password)
+        if ok and texto.strip() == self.obter_senha_mestra():
+            self.lacrado = True
+            try:
+                with open(os.path.join(self.caminho_raiz, ".lock"), "w") as f: f.write("LACRADO")
+            except: pass
+            self.aplicar_visual_lacre_automatico()
+
+    def solicitar_renomeio(self):
+        novo_nome, ok = QInputDialog.getText(self, "Genick Edit", "Novo nome:", text=self.label_nome.text())
+        if ok and novo_nome.strip():
+            novo_caminho = os.path.join(os.path.dirname(self.caminho_raiz), novo_nome.strip())
+            try:
+                os.rename(self.caminho_raiz, novo_caminho)
+                self.caminho_raiz = novo_caminho
+                self.label_nome.setText(novo_nome.strip())
+            except Exception as e: QMessageBox.critical(self, "Erro", str(e))
+
+    def escolher_nova_capa(self):
+        img, _ = QFileDialog.getOpenFileName(self, "Capa", self.caminho_raiz, "Imagens (*.png *.jpg *.webp)")
+        if img: self.atualizar_visual_capa(img)
+# --- CLASSE PRINCIPAL ---
+# --- CLASSE PRINCIPAL ---
+class GenickViewDesktop(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Genick View Desktop v0.6")
+        self.resize(1000, 700)
+        self.lista_atual_fotos = []
+        self.indice_foto_atual = 0
+
+        # --- 1. CRIAÇÃO DOS GRIDS ---
+        self.grid_home = QGridLayout()
+        self.grid_album = QGridLayout()
+
+        # --- 2. CONFIGURAÇÃO DE ESPAÇAMENTO (COLADO NAS BORDAS) ---
+        # Home
+        # Home
+        self.grid_home.setSpacing(10)          # Espaço entre cards (ajuste ao seu gosto)
+        self.grid_home.setHorizontalSpacing(5) # O vão entre as colunas (as linhas vermelhas)
+        self.grid_home.setContentsMargins(10, 10, 10, 10)
+        self.grid_home.setAlignment(Qt.AlignLeft | Qt.AlignTop) # TRAVA NA ESQUERDA
+
+        # Album
+        self.grid_album.setSpacing(10)
+        self.grid_album.setHorizontalSpacing(5)
+        self.grid_album.setContentsMargins(10, 10, 10, 10)
+        self.grid_album.setAlignment(Qt.AlignLeft | Qt.AlignTop) # TRAVA NA ESQUERDA
+
+        # --- 3. ÁREAS DE SCROLL (O SEGREDO DO ALINHAMENTO) ---
+        self.scroll_home = self._criar_area_scroll(self.grid_home)
+        self.scroll_album = self._criar_area_scroll(self.grid_album)
+        
+        # Estas duas linhas abaixo forçam os cards a começarem no canto superior esquerdo
+        self.scroll_home.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.scroll_album.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        # Segue o seu código original...
+        self.media_player = QMediaPlayer()
+
+        # 1. PLAYER DE ÁUDIO/VÍDEO
+        self.media_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.media_player.setAudioOutput(self.audio_output)
+        self.audio_output.setVolume(1.0)
+
+        # 2. WIDGET CENTRAL E WALLPAPER
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        
+        self.background_label = QLabel(self.central_widget)
+        # Usa a variável que criamos lá no topo do código!
+        self.background_label.setPixmap(QPixmap(CAMINHO_FUNDO))
+        self.background_label.setScaledContents(True)
+
+        # --- BARRA DE MENU SUPERIOR ---
+        # Cria a barra de menu no topo da janela principal
+        barra_menu = self.menuBar()
+        
+        # Cria o menu "Ajuda" (ou "Sobre", como preferir)
+        menu_ajuda = barra_menu.addMenu("&Sobre")
+
+        # Opção 2: Instruções de Uso (Nova!)
+        acao_instrucoes = menu_ajuda.addAction("&Como Usar")
+        acao_instrucoes.triggered.connect(self.mostrar_instrucoes)
+        
+        # Cria a ação "Sobre" que vai disparar a janela de informação
+        acao_sobre = menu_ajuda.addAction("&Sobre o Genick View")
+        acao_sobre.setStatusTip("Informações sobre o software e desenvolvedor")
+        
+        # Conecta a ação a uma função que vai abrir a janelinha (caixa de diálogo)
+        acao_sobre.triggered.connect(self.mostrar_sobre)
+
+        # Layout Principal (Faz a barra de rolagem colar na direita)
+        self.layout_principal = QVBoxLayout(self.central_widget)
+        self.layout_principal.setContentsMargins(0, 0, 0, 0)
+
+        # 3. GRIDS (Criar antes dos Scrolls)
+        self.grid_home = QGridLayout()
+        self.grid_album = QGridLayout()
+
+        # --- CONFIGURAÇÃO PARA O GRID DO ÁLBUM ---
+        self.grid_album.setSpacing(10)          # Espaço entre os cards
+        self.grid_album.setHorizontalSpacing(5) # Reduz o vão lateral (as colunas vermelhas)
+        self.grid_album.setContentsMargins(10, 10, 10, 10)
+        
+        # O SEGREDO: Força o grid a não expandir as colunas
+        self.grid_album.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        # 4. ÁREAS DE SCROLL
+        self.scroll_home = self._criar_area_scroll(self.grid_home)
+        self.scroll_album = self._criar_area_scroll(self.grid_album)
+        
+        estilo_scroll = "QScrollArea { background: transparent; border: none; } QWidget { background: transparent; }"
+        self.scroll_home.setStyleSheet(estilo_scroll)
+        self.scroll_album.setStyleSheet(estilo_scroll)
+
+        # 5. TELA FOTO (MODO EXPERT)
+        self.tela_foto = QWidget()
+        layout_f = QVBoxLayout(self.tela_foto)
+        self.view = QGraphicsView()
+        self.scene = QGraphicsScene()
+        self.view.setScene(self.scene)
+        self.view.setStyleSheet("background: transparent; border: none;")
+        self.pixmap_item = QGraphicsPixmapItem()
+        self.scene.addItem(self.pixmap_item)
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        layout_f.addWidget(self.view)
+
+        # Botão Esquerdo (Anterior)
+        self.btn_ant = QPushButton("❮", self.tela_foto)
+        self.btn_ant.setFixedSize(50, 80)
+        self.btn_ant.setStyleSheet("background: rgba(0,0,0,100); color: white; border: none; font-size: 30px; border-radius: 5px;")
+        self.btn_ant.clicked.connect(self.foto_anterior)
+        
+        # Botão Direito (Próxima)
+        self.btn_prox = QPushButton("❯", self.tela_foto)
+        self.btn_prox.setFixedSize(50, 80)
+        self.btn_prox.setStyleSheet("background: rgba(0,0,0,100); color: white; border: none; font-size: 30px; border-radius: 5px;")
+        self.btn_prox.clicked.connect(self.proxima_foto)
+
+        self.btn_fechar_foto = QPushButton("⬅ Voltar ao Álbum")
+        self.btn_fechar_foto.setStyleSheet("background: rgba(0,0,0,150); color: white; padding: 10px; border-radius: 5px; font-weight: bold;")
+        self.btn_fechar_foto.clicked.connect(lambda: self.camadas.setCurrentIndex(1))
+        layout_f.addWidget(self.btn_fechar_foto)
+
+        # --- TELA VÍDEO (ESTILO CELLULOID ESTÁVEL) ---
+        self.tela_video = QWidget()
+        self.tela_video.setStyleSheet("background-color: black;")
+        
+        # Layout Vertical para separar vídeo de controles sem sobreposição problemática
+        layout_v_base = QVBoxLayout(self.tela_video)
+        layout_v_base.setContentsMargins(0, 0, 0, 0)
+        layout_v_base.setSpacing(0) # Cola a barra no vídeo
+
+        # Voltamos para o QVideoWidget (que é estável e não dá SegFault)
+        self.video_widget = QVideoWidget()
+        layout_v_base.addWidget(self.video_widget, stretch=1) # O vídeo cresce ao máximo
+
+        # A BARRA (Agora ela tem seu lugar fixo no layout, garantindo visibilidade)
+        self.barra_celluloid = QFrame()
+        self.barra_celluloid.setFixedHeight(65)
+        self.barra_celluloid.setStyleSheet("""
+            QFrame {
+                background-color: #121212;
+                border-top: 1px solid #333;
+            }
+            QPushButton { 
+                background: #222; 
+                color: white; 
+                border-radius: 5px; 
+                font-weight: bold; 
+                min-width: 40px;
+                min-height: 40px;
+            }
+            QPushButton:hover { background: #444; }
+        """)
+
+        layout_barra = QHBoxLayout(self.barra_celluloid)
+        layout_barra.setContentsMargins(10, 0, 10, 0)
+        
+        self.btn_play_cell = QPushButton("▶")
+        self.btn_play_cell.setFixedSize(50, 45) # Força um tamanho quadrado e visível
+        self.btn_play_cell.setStyleSheet("""
+            QPushButton {
+                background-color: #222;
+                color: white;
+                font-size: 18px;
+                border-radius: 5px;
+            }
+            QPushButton:hover { background-color: #444; }
+        """)
+        self.btn_play_cell.clicked.connect(self.alternar_play_pause)
+
+        # [NOVO] Label para o Tempo Atual do Vídeo
+        self.lbl_tempo_atual = QLabel("00:00")
+        self.lbl_tempo_atual.setStyleSheet("color: #00ff00; font-family: monospace; font-size: 14px;")
+        layout_barra.addWidget(self.lbl_tempo_atual)
+
+        # A sua Barra de Progresso existente vai aqui no meio
+        # layout_barra.addWidget(self.sua_barra_de_progresso)
+
+        # [NOVO] Label para o Tempo Total do Vídeo
+        self.lbl_tempo_total = QLabel("00:00")
+        self.lbl_tempo_total.setStyleSheet("color: #888888; font-family: monospace; font-size: 14px;")
+        layout_barra.addWidget(self.lbl_tempo_total)
+
+        self.label_vol = QLabel("🔊")
+        self.label_vol.setStyleSheet("color: white; background: transparent; margin-left: 10px;")
+
+        # 3. Slider de Volume
+        self.slider_volume = QSlider(Qt.Horizontal)
+        self.slider_volume.setRange(0, 100)
+        self.slider_volume.setValue(70)
+        self.slider_volume.setFixedWidth(100)
+        self.slider_volume.setStyleSheet("QSlider::handle:horizontal { background: #00ff00; width: 14px; border-radius: 7px; }")
+        self.slider_volume.valueChanged.connect(self.mudar_volume)
+
+        self.slider_video = QSlider(Qt.Horizontal)
+        self.slider_video.setStyleSheet("QSlider::handle:horizontal { background: #a00; }")
+
+        self.btn_sair_cell = QPushButton("✖")
+        self.btn_sair_cell.clicked.connect(self.parar_video_e_voltar)
+
+        layout_barra.addWidget(self.btn_play_cell)    # DEVE SER O PRIMEIRO
+        layout_barra.addWidget(self.label_vol)        # SEGUNDO
+        layout_barra.addWidget(self.slider_volume)    # TERCEIRO
+        layout_barra.addWidget(self.lbl_tempo_atual)  # QUARTO
+        layout_barra.addWidget(self.lbl_tempo_total)  # QUINTO
+        layout_barra.addWidget(self.slider_video, stretch=1) # SEXTO
+        layout_barra.addWidget(self.btn_sair_cell)    # SÉTIMO
+
+        # Adiciona a barra ao layout
+        layout_v_base.addWidget(self.barra_celluloid)
+
+        # Conecta o player ao widget de vídeo estável
+        self.media_player.setVideoOutput(self.video_widget)
+        # Mude para self.media_player!
+        self.media_player.positionChanged.connect(self.atualizar_posicao_tempo)
+        self.media_player.durationChanged.connect(self.atualizar_duracao_total)
+
+        # 7. CAMADAS (STACKED WIDGET) - Criar ANTES de adicionar os widgets
+        self.camadas = QStackedWidget()
+        self.camadas.addWidget(self.scroll_home)   # 0
+        self.camadas.addWidget(self.scroll_album)  # 1
+        self.camadas.addWidget(self.tela_foto)     # 2
+        self.camadas.addWidget(self.tela_video)    # 3
+        
+        self.layout_principal.addWidget(self.camadas)
+
+        self.btn_rew = QPushButton("⏪")
+        self.btn_rew.setFixedSize(40, 40)
+        self.btn_rew.clicked.connect(self.rew_video)
+
+        self.btn_ffw = QPushButton("⏩")
+        self.btn_ffw.setFixedSize(40, 40)
+        self.btn_ffw.clicked.connect(self.ffw_video)
+
+        # MANTENHA APENAS ESTA LINHA PARA CADA BOTÃO:
+        layout_barra.addWidget(self.btn_rew)
+        layout_barra.addWidget(self.slider_video)
+        layout_barra.addWidget(self.btn_ffw)
+        
+        # Botão de Loop
+        self.btn_loop = QPushButton("🔁")
+        self.btn_loop.setCheckable(True) # Ele fica "pressionado" ou não
+        self.btn_loop.setFixedSize(40, 40)
+        self.btn_loop.setStyleSheet("QPushButton:checked { background-color: #a00; }")
+
+        layout_barra.addWidget(self.btn_loop)
+
+        # Botão de Velocidade (Menu de Opções)
+        # Botão de Velocidade
+        self.btn_speed = QPushButton("1.0x")
+        self.btn_speed.setFixedSize(60, 40)
+        
+        menu_speed = QMenu(self)
+        menu_speed.setStyleSheet("QMenu { background-color: #222; color: white; border: 1px solid #444; }")
+        
+        # Criando as opções de forma explícita
+        for vel in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]:
+            texto = f"{vel}x"
+            acao = menu_speed.addAction(texto)
+            # O segredo do 'data' evita o bug do lambda
+            acao.setData(vel) 
+            acao.triggered.connect(self.processar_mudanca_velocidade)
+            
+        self.btn_speed.setMenu(menu_speed)
+
+        layout_barra.addWidget(self.btn_speed)
+
+        layout_barra.addWidget(self.btn_sair_cell)
+
+        # 8. CONEXÕES
+        self.btn_rew.clicked.connect(self.rew_video)
+        self.btn_ffw.clicked.connect(self.ffw_video)
+        self.media_player.mediaStatusChanged.connect(self.verificar_loop)
+        self.btn_sair_cell.clicked.connect(self.parar_video_e_voltar)
+        self.media_player.positionChanged.connect(self.atualizar_slider)
+        self.media_player.durationChanged.connect(self.configurar_slider)
+        self.slider_video.sliderMoved.connect(self.mudar_posicao_video)
+
+        self.carregar_galeria_principal()
+
+    # --- MÉTODOS DE CONTROLE ---
+    def resizeEvent(self, event):
+        self.background_label.setGeometry(0, 0, self.width(), self.height())
+        
+        # Centraliza os botões de navegação lateralmente
+        meio_y = (self.height() // 2) - 40
+        self.btn_ant.move(20, meio_y)
+        self.btn_prox.move(self.width() - 70, meio_y)
+        
+        super().resizeEvent(event)
+
+    def wheelEvent(self, event):
+        if self.camadas.currentIndex() == 2:
+            zoom = 1.15 if event.angleDelta().y() > 0 else 1/1.15
+            self.view.scale(zoom, zoom)
+
+    def mouseDoubleClickEvent(self, event):
+        if self.camadas.currentIndex() == 2:
+            # Se clicou em qualquer lugar da tela de foto, reseta
+            self.view.resetTransform()
+            self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        super().mouseDoubleClickEvent(event) # Mantém o comportamento padrão do sistema
+
+    def mostrar_sobre(self):
+        """Exibe as informações e diretrizes do Genick View Desktop."""
+        info = QMessageBox(self)
+        info.setWindowTitle("Sobre o Genick View Desktop")
+        
+        # Aqui você coloca o texto com a identidade do seu projeto
+        texto_sobre = """
+            <h3><b>Genick View Desktop v0.6</b></h3>
+            <p>Desenvolvedor:<b> 🔏 Marshall Rick</b></p>
+            <p>Sistema independente focado na soberania e privacidade de mídia.</p>
+            Desenvolvido sob as diretrizes éticas e de segurança do ID-LACRE.</p>
+            <hr>
+            <p><b>Apoie o Desenvolvimento:</b></p>
+        <p>☕ Ko-fi: <a href="ko-fi.com/marshallrick">Fazer uma Doação no Ko-Fi</a></p>
+        <p>🛡️ GitHub: <a href="https://github.com/MetalBoy84">Acompanhar no GitHub</a></p>
+        """
+        
+        info.setText(texto_sobre)
+        info.setIcon(QMessageBox.Information)
+        
+        # Estilização básica para combinar com seu fundo escuro se quiser
+        info.setStyleSheet("""
+            QMessageBox { background-color: #1a1a1a; color: #ffffff; }
+            QPushButton { background-color: #2b2b2b; color: #00ff00; border: 1px solid #00ff00; padding: 5px; min-width: 70px; }
+            QPushButton:hover { background-color: #00ff00; color: #1a1a1a; }
+            QLabel { color: #ffffff; }
+        """)
+        
+        info.exec()
+
+    def mostrar_instrucoes(self):
+        """Exibe o manual de operação rápida do Genick View Desktop."""
+        guia = QMessageBox(self)
+        guia.setWindowTitle("Guia de Operação - Genick View")
+        
+        texto_guia = (
+            "<h3>Manual de Operação Rápida</h3>"
+            "<hr>"
+            "<b>🔒 Gerenciamento de Álbuns (Menu do Card):</b>"
+            "<ul>"
+            "<li><b>Bloquear Álbum:</b> Protege com senha pessoal (Padrão inicial: <b>1234</b>).</li>"
+            "<li><b>Alterar Senha Mestra:</b> Substitui a senha inicial por uma nova de sua escolha.</li>"
+            "<li><b>Renomear:</b> Altera o nome do álbum e da sua pasta raiz no sistema.</li>"
+            "<li><b>Alterar Miniatura:</b> Define uma nova capa usando uma imagem interna do álbum.</li>"
+            "</ul>"
+            
+            "<b>↔️ Navegação e Retorno:</b>"
+            "<ul>"
+            "<li><b>Dentro do Álbum:</b> Use o primeiro card (<b>Voltar</b>) para retornar à tela inicial.</li>"
+            "<li><b>Modo Visualizador:</b> Use a barra inferior (<b>Voltar ao Álbum</b>) para fechar a imagem. "
+            "<br><small><i>Nota: A tecla 'ESC' não tem efeito de retorno neste modo.</i></small></li>"
+            "</ul>"
+            
+            "<b>🎬 Controles do Player de Vídeo (Ordem dos Botões):</b><br>"
+            "Play/Pause | Volume | REW (-5s) | Barra de Progresso | FFW (+5s) | Loop | Velocidade | Sair (X) '</i></p>"
+        )
+                       
+        guia.setText(texto_guia)
+        guia.setIcon(QMessageBox.Information)
+        
+        # Reaplica o seu estilo customizado dark/neon
+        guia.setStyleSheet(self.findChild(QMessageBox).styleSheet()) 
+        guia.exec()
+
+    def proxima_foto(self):
+        if self.lista_atual_fotos:
+            self.indice_foto_atual = (self.indice_foto_atual + 1) % len(self.lista_atual_fotos)
+            self.atualizar_imagem_no_visualizador()
+
+    def foto_anterior(self):
+        if self.lista_atual_fotos:
+            self.indice_foto_atual = (self.indice_foto_atual - 1) % len(self.lista_atual_fotos)
+            self.atualizar_imagem_no_visualizador()
+
+    def exibir_video(self, caminho):
+        self.camadas.setCurrentIndex(3)
+        self.media_player.setSource(QUrl.fromLocalFile(caminho))
+        self.media_player.play()
+        self.btn_play_cell.setText("⏸")
+
+    def alternar_play_pause(self):
+        # Captura o estado atual do player
+        estado = self.media_player.playbackState()
+        
+        if estado == QMediaPlayer.PlayingState:
+            self.media_player.pause()
+            self.btn_play_cell.setText("▶")
+        else:
+            # Se estiver pausado ou parado, ele inicia
+            self.media_player.play()
+            self.btn_play_cell.setText("⏸")
+
+    # Remova ou comente a função 'mostrar_barra_celluloid' antiga
+    # e remova o 'eventFilter' do vídeo para não dar conflito.
+
+    def mudar_volume(self, valor):
+        # Converte 0-100 para 0.0-1.0
+        if hasattr(self, 'audio_output'):
+            self.audio_output.setVolume(valor / 100)
+
+    def formatar_tempo(self, ms):
+        """Converte milissegundos em formato MM:SS"""
+        segundos = (ms // 1000) % 60
+        minutos = (ms // 60000) % 60
+        return f"{minutos:02d}:{segundos:02d}"
+
+    def atualizar_posicao_tempo(self, posicao):
+        # Atualiza o texto do relógio atual
+        self.lbl_tempo_atual.setText(self.formatar_tempo(posicao))
+
+    def atualizar_duracao_total(self, duracao):
+        # Atualiza o texto do relógio total
+        self.lbl_tempo_total.setText(self.formatar_tempo(duracao))
+
+    def mudar_velocidade(self, vel):
+        # Altera a velocidade real de reprodução
+            self.media_player.setPlaybackRate(vel)
+        # Atualiza o texto do botão para você saber qual está ativa
+            self.btn_speed.setText(f"{vel}x")
+
+    def processar_mudanca_velocidade(self):
+        # Recupera qual ação foi clicada
+        acao_clicada = self.sender()
+        if acao_clicada:
+            nova_vel = acao_clicada.data()
+            # Aplica ao Player
+            self.media_player.setPlaybackRate(nova_vel)
+            # Atualiza o texto do botão para confirmar a mudança
+            self.btn_speed.setText(f"{nova_vel}x")
+            print(f"Velocidade alterada para: {nova_vel}") # Para você conferir no terminal
+
+    def verificar_loop(self, status):
+        # Importante: O status vem automaticamente do sinal do player
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if self.btn_loop.isChecked():
+                self.media_player.setPosition(0)
+                self.media_player.play()
+
+    # Remova ou comente a função 'mostrar_barra_celluloid' antiga
+    # e remova o 'eventFilter' do vídeo para não dar conflito.
+
+    def parar_video_e_voltar(self):
+        self.media_player.stop()
+        self.camadas.setCurrentIndex(1)
+
+    def atualizar_slider(self, pos):
+        # Atualiza a posição da bolinha do slider conforme o vídeo toca
+        self.slider_video.setValue(pos)
+
+    def configurar_slider(self, duracao):
+        # Define o tamanho total do slider baseado no tempo do vídeo (ms)
+        self.slider_video.setRange(0, duracao)
+
+    def mudar_posicao_video(self, pos):
+        # Faz o vídeo pular para onde você arrastou o slider
+        self.media_player.setPosition(pos)
+
+    def ffw_video(self):
+        # Avança 10 segundos (10.000 milissegundos)
+        nova_pos = self.media_player.position() + 10000
+        self.media_player.setPosition(nova_pos)
+
+    def rew_video(self):
+        # Retrocede 10 segundos
+        nova_pos = self.media_player.position() - 10000
+        self.media_player.setPosition(max(0, nova_pos))
+
+    def _criar_area_scroll(self, layout):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        w = QWidget(); w.setLayout(layout)
+        scroll.setWidget(w)
+        return scroll
+
+    def carregar_galeria_principal(self):
+        while self.grid_home.count():
+            item = self.grid_home.takeAt(0).widget()
+            if item: item.deleteLater()
+            
+        pastas = [os.path.expanduser("~/Imagens"), os.path.expanduser("~/Downloads"), os.path.expanduser("~/Vídeos")]
+        ext_img = ('.jpg', '.png', '.webp')
+        ext_vid = ('.mp4', '.mkv', '.mov')
+        col, lin = 0, 0
+        
+        for d in pastas:
+            if not os.path.exists(d): continue
+            for root, dirs, files in os.walk(d):
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                
+                # Lista todos os arquivos suportados
+                arquivos = [f for f in files if f.lower().endswith(ext_img + ext_vid)]
+                
+                if arquivos:
+                    primeiro = arquivos[0]
+                    full_path_midia = os.path.join(root, primeiro)
+                    capa_final = full_path_midia
+                    
+                    # SE FOR VÍDEO: Gera a miniatura antes de criar o card
+                    if primeiro.lower().endswith(ext_vid):
+                        thumb_path = os.path.join(root, ".thumb_" + primeiro + ".jpg")
+                        if not os.path.exists(thumb_path):
+                            self.gerar_miniatura_video(full_path_midia, thumb_path)
+                        capa_final = thumb_path # Usa a miniatura gerada como capa
+                    
+                    card = AlbumCard(os.path.basename(root) or "Home", root, capa_final)
+                    self.grid_home.addWidget(card, lin, col)
+                    col += 1
+                    if col >= 6: col = 0; lin += 1
+
+    def exibir_foto_cheia(self, caminho):
+        pasta = os.path.dirname(caminho)
+        formatos = ('.jpg', '.jpeg', '.png', '.webp')
+        self.lista_atual_fotos = sorted([os.path.join(pasta, f) for f in os.listdir(pasta) if f.lower().endswith(formatos)])
+        if caminho in self.lista_atual_fotos: self.indice_foto_atual = self.lista_atual_fotos.index(caminho)
+        self.atualizar_imagem_no_visualizador()
+        self.camadas.setCurrentIndex(2)
+
+    def atualizar_imagem_no_visualizador(self):
+        caminho = self.lista_atual_fotos[self.indice_foto_atual]
+        pix = QPixmap(caminho)
+        if not pix.isNull():
+            self.pixmap_item.setPixmap(pix)
+            self.scene.setSceneRect(pix.rect())
+            self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def gerar_miniatura_video(self, caminho_video, caminho_saida_jpg):
+        try:
+            comando = ['ffmpeg', '-y', '-i', caminho_video, '-ss', '00:00:02', '-vframes', '1', '-s', '200x200', caminho_saida_jpg]
+            subprocess.run(comando, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            return True
+        except: 
+            return False
+
+    def abrir_pasta(self, caminho, nome):
+        # Limpa o grid anterior
+        while self.grid_album.count():
+            w = self.grid_album.takeAt(0).widget()
+            if w: w.deleteLater()
+            
+        # --- BOTÃO VOLTAR PERSONALIZADO ---
+        # Ajustado para 200x280 para combinar com o novo tamanho dos cards
+        btn = QPushButton(f"⬅ Voltar\n\n{nome}")
+        btn.setFixedSize(200, 280) 
+        btn.setStyleSheet("""
+            QPushButton {
+                color: #aaa; 
+                border: 2px dashed #444; 
+                border-radius: 12px; 
+                background: rgba(255, 255, 255, 5);
+                font-weight: bold;
+                font-size: 16px; /* Fonte maior para o título da pasta */
+            }
+            QPushButton:hover {
+                color: white;
+                border-color: #888;
+                background: rgba(255, 255, 255, 15);
+            }
+        """)
+        btn.clicked.connect(lambda: self.camadas.setCurrentIndex(0))
+        self.grid_album.addWidget(btn, 0, 0)
+        
+        col, lin = 1, 0
+        arquivos = sorted([
+            f for f in os.listdir(caminho) 
+            if f.lower().endswith(('.jpg', '.png', '.webp', '.mp4')) 
+            and not f.startswith('.thumb_') # <--- ESSA É A VACINA
+        ])
+        
+        for arq in arquivos:
+            full_path = os.path.join(caminho, arq)
+            ext_vid = ('.mp4', '.mkv', '.mov', '.avi')
+            capa_do_card = full_path # Padrão para fotos
+            
+            # SE FOR VÍDEO: Tenta gerar ou usar a miniatura existente
+            if arq.lower().endswith(ext_vid):
+                # Cria a thumb com um nome que não conflite
+                thumb_path = os.path.join(caminho, f".thumb_{arq}.jpg")
+                
+                if not os.path.exists(thumb_path):
+                    # Chama o FFmpeg que configuramos
+                    sucesso = self.gerar_miniatura_video(full_path, thumb_path)
+                    if sucesso:
+                        capa_do_card = thumb_path
+                else:
+                    capa_do_card = thumb_path
+
+            # Cria o card com a capa correta (foto real ou thumb do vídeo)
+            card = AlbumCard(arq.replace(".jpg", ""), full_path, capa_do_card)
+            card.btn_menu.hide() 
+            
+            self.grid_album.addWidget(card, lin, col)
+            
+            col += 1
+            # Se col >= 7, pula linha. (Ajuste para 5 ou 6 se os cards ficarem muito espremidos)
+            if col >= 7: col =0; lin += 1
+                
+        self.camadas.setCurrentIndex(1)
+
+# O "if __name__" fica encostado na esquerda, sem espaços!
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    j = GenickViewDesktop()
+    j.show()
+    sys.exit(app.exec())
