@@ -549,7 +549,7 @@ class GenickViewDesktop(QMainWindow):
             Desenvolvido sob as diretrizes éticas e de segurança do ID-LACRE.</p>
             <hr>
             <p><b>Apoie o Desenvolvimento:</b></p>
-        <p>☕ Ko-fi: <a href="ko-fi.com/marshallrick">Fazer uma Doação no Ko-Fi</a></p>
+        <p>☕ Ko-fi: <a href="https://ko-fi.com/marshallrick">Fazer uma Doação no Ko-Fi</a></p>
         <p>🛡️ GitHub: <a href="https://github.com/MetalBoy84">Acompanhar no GitHub</a></p>
         """
         
