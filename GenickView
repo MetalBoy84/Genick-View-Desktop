@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QMenu,
                              QGraphicsPixmapItem, QInputDialog, QLineEdit, QMessageBox,
                              QSlider)
 from PySide6.QtGui import QPixmap, QAction, QColor, QFont, QPainter, QBrush, QPen
-from PySide6.QtCore import Qt, QTimer, QRect, QEvent, QUrl
+from PySide6.QtCore import Qt, QTimer, QRect, QEvent, QUrl, QSettings
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QAudioFormat
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
@@ -67,7 +67,18 @@ class AlbumCard(QFrame):
         self.capa.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.capa.setGeometry(10, 10, 180, 180)
         self.capa.setStyleSheet("background-color: #111; border-radius: 8px;")
-        self.atualizar_visual_capa(caminho_capa)
+        
+        # 🐘 --- ATUALIZAÇÃO: MEMÓRIA DE ELEFANTE PARA A CAPA ---
+        settings = QSettings("GenickView", "GenickViewDesktop")
+        capa_salva = settings.value(f"capa_{self.caminho_raiz}", None)
+        
+        if capa_salva and os.path.exists(capa_salva):
+            # Se achou uma capa customizada gravada (e o arquivo existe), usa ela!
+            self.atualizar_visual_capa(capa_salva)
+        else:
+            # Senão, usa o caminho padrão que veio do loop
+            self.atualizar_visual_capa(caminho_capa)
+        # ------------------------------------------------------
 
         self.btn_menu = QPushButton("▼", self.container_capa)
         self.btn_menu.setGeometry(160, 15, 28, 28)
@@ -228,7 +239,10 @@ class AlbumCard(QFrame):
 
     def escolher_nova_capa(self):
         img, _ = QFileDialog.getOpenFileName(self, "Capa", self.caminho_raiz, "Imagens (*.png *.jpg *.webp)")
-        if img: self.atualizar_visual_capa(img)
+        if img: 
+            self.atualizar_visual_capa(img)
+            settings = QSettings("GenickView", "GenickViewDesktop")
+            settings.setValue(f"capa_{self.caminho_raiz}", img)
 # --- CLASSE PRINCIPAL ---
 # --- CLASSE PRINCIPAL ---
 class GenickViewDesktop(QMainWindow):
@@ -324,7 +338,7 @@ class GenickViewDesktop(QMainWindow):
         estilo_scroll = "QScrollArea { background: transparent; border: none; } QWidget { background: transparent; }"
         self.scroll_home.setStyleSheet(estilo_scroll)
         self.scroll_album.setStyleSheet(estilo_scroll)
-
+                                        
         # 5. TELA FOTO (MODO EXPERT)
         self.tela_foto = QWidget()
         layout_f = QVBoxLayout(self.tela_foto)
