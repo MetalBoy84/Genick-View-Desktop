@@ -19,16 +19,6 @@ PASTA_DO_PROGRAMA = os.path.dirname(os.path.abspath(__file__))
 # Define o caminho do fundo (EaIpO.jpg deve estar na mesma pasta que este script)
 CAMINHO_FUNDO = os.path.join(PASTA_DO_PROGRAMA, "EaIpO.jpg")
 
-# Define onde as fotos ficam (Pasta Imagens do usuário atual / GenickView)
-PASTA_FOTOS_USUARIO = os.path.join(Path.home(), "Imagens", "GenickView")
-
-# Cria a pasta de fotos automaticamente se não existir para evitar janela cinza
-if not os.path.exists(PASTA_FOTOS_USUARIO):
-    try:
-        os.makedirs(PASTA_FOTOS_USUARIO)
-    except:
-        pass
-
 # Vacina contra Segfault (Essencial no Linux)
 try:
     locale.setlocale(locale.LC_NUMERIC, 'C')
