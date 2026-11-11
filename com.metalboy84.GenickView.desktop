@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Genick View
+Comment=Player e galeria independente com foco em segurança e privacidade de mídia
+Exec=GenickView
+Icon=com.metalboy84.GenickView
+Categories=Graphics;Viewer;
+Terminal=false
+StartupWMClass=GenickView
