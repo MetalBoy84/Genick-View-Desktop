@@ -1,0 +1,23 @@
+app-id: com.metalboy84.GenickView
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: GenickView
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --filesystem=host
+
+modules:
+  - name: genickview
+    buildsystem: simple
+    build-commands:
+      - install -D GenickView /app/bin/GenickView
+      - install -D com.metalboy84.GenickView.desktop /app/share/applications/com.metalboy84.GenickView.desktop
+      - install -D com.metalboy84.GenickView.metainfo.xml /app/share/metainfo/com.metalboy84.GenickView.metainfo.xml
+      - install -D icon_genick2.png /app/share/icons/hicolor/512x512/apps/com.metalboy84.GenickView.png
+    sources:
+      - type: dir
+        path: .
