@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.metalboy84.GenickView</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Genick View</name>
+  <summary>Player e galeria independente com foco em segurança e privacidade de mídia</summary>
+
+  <description>
+    <p>
+      O Genick View é uma galeria e visualizador de mídia independente projetado com base 
+      nas diretrizes de soberania, segurança e privacidade dos dados (Diretrizes ID-LACRE).
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.metalboy84.GenickView.desktop</launchable>
+  <url type="homepage">https://github.com/MetalBoy84/Genick-View-Desktop</url>
+
+  <provides>
+    <binary>GenickView</binary>
+  </provides>
+
+  <releases>
+    <release version="1.0.0" date="2026-05-10" />
+  </releases>
+</component>
